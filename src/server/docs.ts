@@ -21,6 +21,8 @@ export type SessionMeta = {
     createdAt: number;
     updatedAt: number;
     createdBy?: string;
+    /** The owner's persistent Chief; ordinary project sessions leave this unset. */
+    chiefFor?: string;
     archived?: boolean;
     /** The session this one was forked from, and the last entry it inherited; no entry: forked before the first message. */
     forkedFrom?: { id: number; entryId?: number };
@@ -35,6 +37,29 @@ export const SessionsDoc = defineDoc<{ items: Record<string, SessionMeta> }>({
     kind: "pocket.sessions",
     version: 1,
     scope: "session",
+    initial: () => ({ items: {} }),
+});
+
+/** One persistent Chief per owner, and replay keys for sessions Chief creates. */
+export const ChiefsDoc = defineDoc<{
+    owners: Record<string, ConversationId>;
+    creates: Record<string, ConversationId>;
+    /** Completed archive/unarchive calls: replay must not undo a later opposite action. */
+    archives?: Record<string, boolean>;
+}>({
+    kind: "pocket.chiefs",
+    version: 1,
+    scope: "session",
+    initial: () => ({ owners: {}, creates: {} }),
+});
+
+/** Durable reporters admitted by Chief's message calls. Forks never inherit them. */
+export const ChiefMessagesDoc = defineDoc<{ items: Record<string, TaskId> }>({
+    kind: "pocket.chief-messages",
+    version: 1,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
     initial: () => ({ items: {} }),
 });
 
@@ -262,6 +287,16 @@ export type Schedule = {
     /** Set by the same call already, when a tool call is replayed: its `taskId:callId`. */
     key?: string;
 };
+
+/** Replay receipts outlive firing/cancellation, so interrupted tool calls cannot recreate a finished schedule. */
+export const ScheduleReceiptsDoc = defineDoc<{ items: Record<string, Schedule> }>({
+    kind: "pocket.schedule-receipts",
+    version: 1,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
+    initial: () => ({ items: {} }),
+});
 
 /** Messages that go to Pi later, or on repeat. A fork starts without them: they belong to who set them up. */
 export const ScheduleDoc = defineDoc<{ items: Record<string, Schedule> }>({

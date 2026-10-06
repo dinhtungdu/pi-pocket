@@ -2,9 +2,11 @@ import type { Context } from "@earendil-works/chord";
 import { awaitWithContext } from "@earendil-works/chord/context";
 import type { ConversationId, Extension, ModelRef, TaskId } from "@earendil-works/pi-durable";
 import type { Browsers } from "./browser.ts";
+import type { Chief } from "./chief.ts";
 import type { Goals } from "./goals.ts";
 import type { LancetGuard } from "./lancet.ts";
 import type { Schedules } from "./schedules.ts";
+import type { sessionQueue } from "./session-queue.ts";
 
 export interface ApprovalRequest {
     id: string;
@@ -117,6 +119,21 @@ export interface PocketHost {
     requesterOf(conversationId: ConversationId): string | undefined;
     /** Report something odd to the log and the connected clients. */
     notice(level: "info" | "warning" | "error", message: string): void;
+    /** Shared requester-scoped session operations, plus Chief's coordinator-home identity. */
+    readonly chief: Pick<
+        Chief,
+        | "ownerFor"
+        | "nameFor"
+        | "list"
+        | "read"
+        | "create"
+        | "message"
+        | "setArchived"
+        | "stop"
+        | "schedules"
+    >;
+    /** Pending user messages, scoped to the current requester; withdrawal never stops active work. */
+    readonly sessionQueue: ReturnType<typeof sessionQueue>;
     /** Messages to Pi for later: the schedule tool sets up Pi's own. */
     readonly schedules: Pick<Schedules, "add" | "cancel" | "list" | "task">;
     /** Sessions' goals: the goals extension runs their checks and counts them. */

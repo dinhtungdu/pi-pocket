@@ -16,6 +16,44 @@ import {
 import { isPinned, paletteOf, prefs, setPrefs, togglePin } from "./theme.js";
 import { html, Icon, Keys, shortPath, Slide, timeAgo, useSlide, usePresence } from "./ui.js";
 
+/** A fixed entry: opening from two devices still reaches the same durable Chief. */
+function ChiefButton() {
+    const [opening, setOpening] = useState(false);
+    const { me, sessions, conversationId } = store.state;
+    const chief = sessions.find((session) => session.chiefFor === me?.id);
+    const name = chief?.title || "Chief";
+
+    if (me?.role !== "owner") {
+        return null;
+    }
+
+    const open = async () => {
+        setOpening(true);
+
+        try {
+            const { id } = await actions.openChief();
+
+            navigate(id);
+            store.set({ drawer: false });
+        } catch (error) {
+            notify("error", error.message);
+        } finally {
+            setOpening(false);
+        }
+    };
+
+    return html`<button
+        class="icon-button"
+        aria-label=${`Open ${name}`}
+        aria-current=${chief?.id === conversationId ? "page" : undefined}
+        title=${`${name} — project coordinator`}
+        disabled=${opening}
+        onClick=${open}
+    >
+        <${Icon} name="sparkle" size=${18} />
+    </button>`;
+}
+
 /** The session list on its way: rows shaped like sessions, lit in turn. */
 function LoadingSessions() {
     return html`<div role="status" aria-label="Loading sessions">
@@ -38,7 +76,7 @@ function LoadingSessions() {
  * pinned), then the rest, newest first. Archived sessions are left out.
  */
 export function workspaceOrder(state = store.state) {
-    const active = state.sessions.filter((session) => !session.archived);
+    const active = state.sessions.filter((session) => !session.archived && !session.chiefFor);
     const pinned = state.pinned
         .map((id) => active.find((session) => session.id === id))
         .filter(Boolean);
@@ -375,6 +413,7 @@ export function SessionList({ compact = false }) {
 
     const shown = sessions.filter(
         (session) =>
+            !session.chiefFor &&
             Boolean(session.archived) === archived &&
             (needle === "" ||
                 `${session.title ?? ""} ${session.cwd} ${shortPath(session.cwd, server?.home)} ${session.model ?? ""}`
@@ -645,6 +684,7 @@ export function SessionList({ compact = false }) {
             >
                 <${Icon} name="command" size=${18} />
             </button>
+            <${ChiefButton} />
             ${
                 !compact &&
                 html`<button
@@ -886,6 +926,7 @@ export function Rail() {
         >
             <${Icon} name="command" size=${18} />
         </button>
+        <${ChiefButton} />
         <div class="rail-items" ref=${items}>
             <${Slide} box=${indicator} />
             ${order.map(

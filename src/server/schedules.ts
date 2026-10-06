@@ -18,7 +18,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { PocketApp } from "./app.ts";
 import { addActivity } from "./collab.ts";
-import { ChatDoc, type Schedule, ScheduleDoc } from "./docs.ts";
+import { ChatDoc, type Schedule, ScheduleDoc, ScheduleReceiptsDoc } from "./docs.ts";
 import { HttpError } from "./errors.ts";
 import { FROM_PREFIX, snippet } from "./projection.ts";
 import { ownRequest, requestFor } from "./requests.ts";
@@ -229,6 +229,16 @@ export class Schedules {
             throw new HttpError(400, "Only sessions can have scheduled messages.");
         }
 
+        if (request.key !== undefined) {
+            const receipt = (
+                await app.harness.snapshot(ScheduleReceiptsDoc, conversationId, context)
+            )?.items[request.key];
+
+            if (receipt !== undefined) {
+                return receipt;
+            }
+        }
+
         const zone = request.zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
         let parsed: ReturnType<typeof parseWhen>;
 
@@ -263,6 +273,16 @@ export class Schedules {
 
         return app.harness.commit(async (tx) => {
             const doc = await tx.doc(ScheduleDoc, conversationId);
+            const receipts =
+                request.key === undefined
+                    ? undefined
+                    : await tx.doc(ScheduleReceiptsDoc, conversationId);
+            const receipt = request.key === undefined ? undefined : receipts?.items[request.key];
+
+            if (receipt !== undefined) {
+                return JSON.parse(JSON.stringify(receipt)) as Schedule;
+            }
+
             const same =
                 request.key === undefined
                     ? undefined
@@ -308,6 +328,10 @@ export class Schedules {
             };
 
             doc.items[id] = schedule;
+
+            if (receipts !== undefined && request.key !== undefined) {
+                receipts.items[request.key] = schedule;
+            }
 
             return schedule;
         }, context);

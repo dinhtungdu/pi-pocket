@@ -1069,6 +1069,10 @@ export function createHandler(options: HttpOptions) {
             return json(response, 200, app.spend.summary(user));
         }
 
+        if (first === "chief" && second === undefined && method === "POST") {
+            return json(response, 200, await app.chief.open(user));
+        }
+
         if (first === "sessions" && second === undefined && method === "GET") {
             return json(response, 200, app.sessions(user));
         }

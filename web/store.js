@@ -747,6 +747,7 @@ export async function start() {
 const current = () => store.state.conversationId;
 
 export const actions = {
+    openChief: () => api("chief", {}),
     /** `inlineFiles`: the files the message mentions with @ go along with it. */
     submit: (text, attachments, mode, inlineFiles = false) =>
         api(`c/${current()}/submit`, {

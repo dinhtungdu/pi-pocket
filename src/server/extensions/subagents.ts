@@ -274,7 +274,9 @@ export default function createSubagents(host: PocketHost) {
                     });
 
                     await configure(tx, child.id, {
-                        extensions: { remove: [SubagentTools] },
+                        extensions: {
+                            remove: [SubagentTools, defineExtension({ name: "pocket-chief" })],
+                        },
                         instructions: `You are the subagent "${name}". You work for another agent, not directly for a person, although a person may open your conversation and talk to you. Answer requests completely but concisely: your final answer is what gets reported back.`,
                         ...(model === undefined ? {} : { model }),
                         ...(args.thinking === undefined

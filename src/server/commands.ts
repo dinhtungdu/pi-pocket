@@ -14,6 +14,7 @@ import {
     type ModelThinkingLevel,
     type TextContent,
 } from "@earendil-works/pi-ai";
+import { configure, defineExtension } from "@earendil-works/pi-durable";
 import type {
     AgentChange,
     ConversationCreateOptions,
@@ -27,6 +28,7 @@ import type { User } from "./config.ts";
 import {
     AuthorsDoc,
     ChatDoc,
+    ChiefsDoc,
     NotesDoc,
     PinsDoc,
     PlanDoc,
@@ -116,6 +118,7 @@ export class Commands {
     async createSession(
         user: User,
         request: { cwd?: string; title?: string; worktree?: unknown },
+        chief?: { key?: string; ownerId?: string; agent?: AgentChange },
     ): Promise<{ id: ConversationId }> {
         const app = this.#app;
 
@@ -135,33 +138,56 @@ export class Commands {
             request.worktree === true,
             title ?? basename(folder),
             async ({ cwd, worktree }) => {
-                const conversation = await app.harness.createConversation(
-                    {
+                return app.harness.commit(async (tx) => {
+                    const chiefs = chief === undefined ? undefined : await tx.doc(ChiefsDoc);
+                    const existing =
+                        chief?.ownerId !== undefined
+                            ? chiefs?.owners[chief.ownerId]
+                            : chief?.key === undefined
+                              ? undefined
+                              : chiefs?.creates[chief.key];
+
+                    if (existing !== undefined) {
+                        return { id: existing };
+                    }
+
+                    const conversation = await tx.createConversation({
                         ownership: { kind: "ownerless" },
-                        agent: {
-                            cwd,
-                            ...(initial.model === undefined ? {} : { model: initial.model }),
-                            ...(initial.thinkingLevel === undefined
-                                ? {}
-                                : { thinkingLevel: initial.thinkingLevel }),
-                        },
-                        init: async (tx, id) => {
-                            const sessions = await tx.doc(SessionsDoc);
+                    });
 
-                            sessions.items[String(id)] = {
-                                cwd,
-                                createdAt: now,
-                                updatedAt: now,
-                                createdBy: user.id,
-                                ...(title === undefined ? {} : { title }),
-                                ...(worktree === undefined ? {} : { worktree }),
-                            };
-                        },
-                    },
-                    context,
-                );
+                    await configure(tx, conversation.id, {
+                        cwd,
+                        ...(initial.model === undefined ? {} : { model: initial.model }),
+                        ...(initial.thinkingLevel === undefined
+                            ? {}
+                            : { thinkingLevel: initial.thinkingLevel }),
+                        ...chief?.agent,
+                        ...(chief?.ownerId === undefined
+                            ? {}
+                            : { extensions: { add: [defineExtension({ name: "pocket-chief" })] } }),
+                    });
+                    const sessions = await tx.doc(SessionsDoc);
 
-                return { id: conversation.id };
+                    sessions.items[String(conversation.id)] = {
+                        cwd,
+                        createdAt: now,
+                        updatedAt: now,
+                        createdBy: user.id,
+                        ...(title === undefined ? {} : { title }),
+                        ...(worktree === undefined ? {} : { worktree }),
+                        ...(chief?.ownerId === undefined ? {} : { chiefFor: chief.ownerId }),
+                    };
+
+                    if (chiefs !== undefined && chief?.ownerId !== undefined) {
+                        chiefs.owners[chief.ownerId] = conversation.id;
+                    }
+
+                    if (chiefs !== undefined && chief?.key !== undefined) {
+                        chiefs.creates[chief.key] = conversation.id;
+                    }
+
+                    return { id: conversation.id };
+                }, context);
             },
         );
     }
@@ -292,6 +318,7 @@ export class Commands {
         id: ConversationId,
         user: User,
         patch: { title?: string; archived?: boolean },
+        chiefArchiveKey?: string,
     ): Promise<void> {
         const app = this.#app;
 
@@ -305,7 +332,17 @@ export class Commands {
 
         const before = app.sessionMeta(id);
 
-        await app.harness.commit(async (tx) => {
+        if (before?.chiefFor !== undefined && patch.archived === true) {
+            throw new HttpError(400, "Chief cannot be archived.");
+        }
+
+        const applied = await app.harness.commit(async (tx) => {
+            const chiefs = chiefArchiveKey === undefined ? undefined : await tx.doc(ChiefsDoc);
+
+            if (chiefArchiveKey !== undefined && chiefs?.archives?.[chiefArchiveKey] === true) {
+                return false;
+            }
+
             const sessions = await tx.doc(SessionsDoc);
             const meta = sessions.items[String(id)];
 
@@ -315,14 +352,28 @@ export class Commands {
 
             // A rename moves the session up the list. Archiving does not: brought back, or undone, it returns to where it was.
             if (patch.title !== undefined) {
-                meta.title = patch.title.trim().slice(0, MAX_TITLE) || undefined;
+                meta.title =
+                    patch.title.trim().slice(0, MAX_TITLE) ||
+                    (meta.chiefFor === undefined ? undefined : "Chief");
                 meta.updatedAt = Date.now();
             }
 
             if (patch.archived !== undefined) {
                 meta.archived = patch.archived;
             }
+
+            if (chiefs !== undefined && chiefArchiveKey !== undefined) {
+                chiefs.archives ??= {};
+                chiefs.archives[chiefArchiveKey] = true;
+            }
+
+            return true;
         }, context);
+
+        if (!applied) {
+            return;
+        }
+
         const title = patch.title?.trim().slice(0, MAX_TITLE);
 
         if (title !== undefined && title !== "" && title !== before?.title) {
@@ -344,6 +395,7 @@ export class Commands {
         id: ConversationId,
         user: User,
         request: SubmitRequest,
+        chiefRequestId?: string,
     ): Promise<{ submissionId: SubmissionId }> {
         const app = this.#app;
 
@@ -379,9 +431,13 @@ export class Commands {
             (file) =>
                 `- ${file.path} (${file.name}, ${file.mime || "unknown type"}, ${file.size} bytes)`,
         );
+        const reference = await app.chief.referenceContext(user, text);
+        const referenced = reference === undefined ? text : `${reference}\n\n${text}`;
         const body = this.messageText(
             user,
-            lines.length === 0 ? text : `${text}${ATTACHMENTS_HEADING}${lines.join("\n")}`.trim(),
+            lines.length === 0
+                ? referenced
+                : `${referenced}${ATTACHMENTS_HEADING}${lines.join("\n")}`.trim(),
         );
         const mentioned =
             request.inlineFiles === true
@@ -410,10 +466,12 @@ export class Commands {
         }
 
         const content = parts.length === 1 ? body : parts;
-        const requestId = ownRequest(
-            user.id,
-            request.requestId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) || randomUUID(),
-        );
+        const requestId =
+            chiefRequestId ??
+            ownRequest(
+                user.id,
+                request.requestId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) || randomUUID(),
+            );
         const submission = await conversation.submit(
             {
                 type: "input",
@@ -754,6 +812,11 @@ export class Commands {
 
         app.requireSee(user, id);
         await app.requireDriver(id, user);
+
+        if (app.sessionMeta(id)?.chiefFor !== undefined) {
+            throw new HttpError(400, "Chief keeps its persistent history; it cannot be reset.");
+        }
+
         const handoff = optionalText(note, "note")?.trim() || undefined;
 
         if (handoff !== undefined && handoff.length > MAX_HANDOFF) {
@@ -1155,6 +1218,10 @@ export class Commands {
 
         if (app.sessionMeta(id) === undefined) {
             throw new HttpError(400, "Only sessions can be forked");
+        }
+
+        if (app.sessionMeta(id)?.chiefFor !== undefined) {
+            throw new HttpError(400, "Chief cannot be forked.");
         }
     }
 

@@ -36,6 +36,7 @@ import {
     LiveDoc,
     type LiveState,
     type ModelRef,
+    type Registry,
     type Storage,
     type SubmissionId,
     UsageDoc,
@@ -49,6 +50,7 @@ import { type BrowserState, Browsers } from "./browser.ts";
 import { type Changes, changesIn, diffOf, revertFile } from "./changes.ts";
 import { Collab, REACTIONS } from "./collab.ts";
 import { Commands } from "./commands.ts";
+import { Chief } from "./chief.ts";
 import { APP_ROOT, ConfigStore, type User } from "./config.ts";
 import {
     ArtifactBodyDoc,
@@ -87,6 +89,7 @@ import { requestPerson } from "./requests.ts";
 import { ResendTask } from "./resend.ts";
 import { type Client, Room, ROOM_DOCS } from "./room.ts";
 import { Schedules } from "./schedules.ts";
+import { sessionQueue } from "./session-queue.ts";
 import { Shell } from "./shell.ts";
 import { Spend } from "./spend.ts";
 import { inRepository } from "./worktrees.ts";
@@ -188,6 +191,7 @@ export class PocketApp {
     settings!: SettingsManager;
     loader!: ExtensionLoader;
     readonly commands = new Commands(this);
+    readonly chief = new Chief(this);
     readonly collab = new Collab(this);
     readonly alerts = new Alerts(this);
     readonly providers = new Providers(this);
@@ -412,7 +416,10 @@ export class PocketApp {
         registry.install(CodingTools);
         // Durable work of the app itself, whatever extension modules are on.
         registry.install(
-            defineExtension({ name: "pocket-core", tasks: [ResendTask, this.shell.task] }),
+            defineExtension({
+                name: "pocket-core",
+                tasks: [ResendTask, this.shell.task, this.chief.task],
+            }),
         );
         const host: PocketHost = {
             guard: this.guard,
@@ -429,6 +436,8 @@ export class PocketApp {
             resolveModel: (spec) => this.resolveModel(spec),
             requesterOf: (conversationId) => this.requesterOf(conversationId),
             notice: (level, message) => this.notice(level, message),
+            chief: this.chief,
+            sessionQueue: sessionQueue(this),
             schedules: this.schedules,
             goals: this.goals,
             browsers: this.browsers,
@@ -456,7 +465,7 @@ export class PocketApp {
             {
                 models: this.models,
                 registry,
-                settings: this.#harnessSettings(),
+                settings: this.#harnessSettings(registry),
                 now: this.now,
                 env: ({ cwd }) => this.#env(cwd ?? this.defaultCwd),
                 conversationCreated: async (tx, conversation) => {
@@ -760,7 +769,7 @@ export class PocketApp {
         this.harness.resume();
     }
 
-    #harnessSettings(): HarnessSettings {
+    #harnessSettings(registry: Registry): HarnessSettings {
         const settings = this.settings;
 
         const safe = <T>(read: () => T): T | undefined => {
@@ -772,6 +781,12 @@ export class PocketApp {
         };
 
         return {
+            get extensions() {
+                return registry
+                    .snapshot()
+                    .installed()
+                    .filter((extension) => extension.name !== "pocket-chief");
+            },
             get stream() {
                 const provider = safe(() => settings.getProviderRetrySettings());
                 const idle = safe(() => settings.getHttpIdleTimeoutMs()) ?? 300_000;
@@ -1462,6 +1477,7 @@ export class PocketApp {
             ...(room.subagentName === undefined ? {} : { subagentName: room.subagentName }),
             // Each browser finds the source's title in its own session list, so only people who can open it get a link.
             ...(forkedFrom === undefined ? {} : { forkedFrom }),
+            ...(meta?.chiefFor === undefined ? {} : { chiefFor: meta.chiefFor }),
             // The session's spend with its subagents', and its limit.
             spend: {
                 spent: this.spend.sessionSpent(root),
