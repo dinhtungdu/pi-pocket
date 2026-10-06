@@ -35,6 +35,7 @@ import { HttpError } from "./errors.ts";
 import { desktopTheme, wallpaperFile } from "./omarchy.ts";
 import type { Client } from "./room.ts";
 import { runningNow } from "./running.ts";
+import { MAX_VOICE_PCM, VoiceSessions } from "./voice.ts";
 
 const WEB = join(APP_ROOT, "web");
 const MODULES = join(APP_ROOT, "node_modules");
@@ -316,6 +317,7 @@ function safeName(name: string): string {
 export function createHandler(options: HttpOptions) {
     const { app } = options;
     const auth = new Auth(app.config);
+    const voice = new VoiceSessions();
 
     /** The app page, with its content security policy. */
     const serveApp = (response: ServerResponse): void => {
@@ -1093,6 +1095,68 @@ export function createHandler(options: HttpOptions) {
             const id = conversationId(second);
 
             app.requireSee(user, id);
+
+            if (
+                third === "voice" &&
+                (parts.length <= 4 || (parts.length === 5 && parts[4] === "finish"))
+            ) {
+                if (crossSite(request)) {
+                    throw new HttpError(403, "Use voice from Pi Pocket's own page.");
+                }
+
+                app.requireSteer(user);
+                const scope = String(id);
+
+                if (parts[4] === "finish") {
+                    if (method !== "POST") {
+                        throw new HttpError(405, "Use POST to finish voice input");
+                    }
+
+                    voice.finish(user.id, scope, fourth!);
+
+                    return json(response, 200, { ok: true });
+                }
+
+                if (fourth === undefined && method === "POST") {
+                    await app.conversation(id);
+
+                    return json(response, 200, { id: voice.start(user.id, scope) });
+                }
+
+                if (fourth !== undefined && method === "GET") {
+                    const controller = new AbortController();
+                    const abort = () => controller.abort();
+
+                    response.once("close", abort);
+
+                    try {
+                        return json(response, 200, {
+                            events: await voice.poll(user.id, scope, fourth, controller.signal),
+                        });
+                    } finally {
+                        response.removeListener("close", abort);
+                    }
+                }
+
+                if (fourth !== undefined && method === "POST") {
+                    if (
+                        request.headers["content-type"]?.split(";", 1)[0]?.trim() !==
+                        "application/octet-stream"
+                    ) {
+                        throw new HttpError(415, "Expected application/octet-stream PCM");
+                    }
+
+                    voice.push(user.id, scope, fourth, await readBody(request, MAX_VOICE_PCM));
+
+                    return json(response, 200, { ok: true });
+                }
+
+                if (fourth !== undefined && method === "DELETE") {
+                    voice.delete(user.id, scope, fourth);
+
+                    return json(response, 200, { ok: true });
+                }
+            }
 
             if (third === "browser") {
                 return browserRoute(request, response, url, user, id, fourth);

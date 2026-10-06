@@ -24,6 +24,7 @@ import {
     uid,
 } from "./store.js";
 import { formatBytes, formatTokens, html, Icon, Marked, modelLabel, Spinner } from "./ui.js";
+import { VoiceButton } from "./voice.js";
 
 const coarse = matchMedia("(pointer: coarse)").matches;
 /** The newest "Send to Pi" text already put into a message box (see `insertIntoComposer`). */
@@ -205,6 +206,9 @@ export function Composer() {
     const { view, conversationId } = store.state;
     const [text, setText] = useState(() => drafts.get(conversationId));
     const [files, setFiles] = useState([]);
+    const [voicePreview, setVoicePreview] = useState("");
+    const [voicePhase, setVoicePhase] = useState("off");
+    const sendLatest = useRef(null);
     const [steer, setSteer] = useState(true);
     const [sending, setSending] = useState(false);
     // Slash command suggestions: the highlighted one, and whether Escape hid the list.
@@ -230,6 +234,8 @@ export function Composer() {
         const draft = drafts.get(conversationId);
 
         setText(draft);
+        setVoicePreview("");
+        setVoicePhase("off");
         setCaret(draft.length);
         setPastes(loadPastes(conversationId));
         setBrowsing(null);
@@ -412,6 +418,7 @@ export function Composer() {
 
     const uploading = files.some((file) => file.state === "uploading");
     const canSend =
+        voicePhase === "off" &&
         !sending &&
         !uploading &&
         (text.trim() !== "" || files.some((file) => file.state === "done"));
@@ -501,6 +508,8 @@ export function Composer() {
             }
         }
     };
+
+    sendLatest.current = send;
 
     /** Put a message sent before into the box, to send again or change. */
     const recall = (value, at = value.length) => {
@@ -1002,6 +1011,7 @@ export function Composer() {
                     </div>`
                 }
                 <div
+                    key="composer"
                     class="composer"
                     onDragOver=${(event) => event.preventDefault()}
                     onDrop=${(event) => {
@@ -1037,6 +1047,9 @@ export function Composer() {
                             )}
                         </div>`
                     }
+                    <div class="file-note" role="status" hidden=${!voicePreview}>
+                        <${Icon} name="mic" size=${14} /> ${voicePreview}
+                    </div>
                     <textarea
                         ref=${box}
                         rows="1"
@@ -1053,7 +1066,7 @@ export function Composer() {
                         onPaste=${onPaste}
                         enterkeyhint=${coarse ? "enter" : "send"}
                     ></textarea>
-                    <div class="composer-row">
+                    <div class="composer-row" key="controls">
                         <button
                             class="icon-button"
                             aria-label="Attach files"
@@ -1100,8 +1113,27 @@ export function Composer() {
                             </button>`
                         }
                         <span class="grow"></span>
+                        <${VoiceButton}
+                            key=${conversationId}
+                            conversationId=${conversationId}
+                            onInterim=${setVoicePreview}
+                            onState=${setVoicePhase}
+                            onSend=${() => sendLatest.current?.()}
+                            sendDisabled=${sending || uploading}
+                            onText=${(spoken) => {
+                                const current = drafts.get(conversationId);
+                                const phrase = spoken.trim();
+
+                                if (phrase) {
+                                    update(
+                                        `${current}${current && !/\s$/.test(current) ? " " : ""}${phrase}`,
+                                    );
+                                }
+                            }}
+                        />
                         ${
                             busy &&
+                            voicePhase === "off" &&
                             html`<button
                                 class="round stop"
                                 aria-label="Stop"
@@ -1111,6 +1143,7 @@ export function Composer() {
                             </button>`
                         }
                         ${
+                            voicePhase === "off" &&
                             (!busy || text.trim() !== "" || files.length > 0) &&
                             html`<button
                                 class="round send"

@@ -38,6 +38,7 @@ Where things are in Pi Pocket, for agents working on it. [AGENTS.md](../AGENTS.m
 | `changes.ts`, `worktrees.ts`, `git.ts` | The Changes sheet (and undoing a file there), per-session worktrees, and the git runner both use                                                                                                                                                                                                                                     |
 | `running.ts`                           | Running now, from Pi Durable's task graph                                                                                                                                                                                                                                                                                            |
 | `prompts.ts`                           | Pi's prompt templates and skills (`/skill:name`) as slash commands                                                                                                                                                                                                                                                                   |
+| `voice.ts`                             | Ephemeral local Parakeet workers for browser dictation: PCM input, bounded transcription event queues, person/session access, and idle cleanup                                                                                                                                                                                       |
 | `providers.ts`, `net.ts`               | Provider sign-ins; HTTP settings for provider streams                                                                                                                                                                                                                                                                                |
 | `lancet.ts`                            | Loads Lancet Guard from Pi's install                                                                                                                                                                                                                                                                                                 |
 | `push.ts`                              | Web Push without dependencies (RFC 8291, 8292)                                                                                                                                                                                                                                                                                       |
@@ -52,26 +53,27 @@ Each default-exports `(host: PocketHost) => Extension | Extension[]` and is inst
 
 ## Web: `web/` (Preact and htm, no build)
 
-| File                 | Owns                                                                                                                                           |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `store.js`           | State, the event stream (SSE, or long polling when a tunnel holds it back), `api()`, `actions`                                                 |
-| `app.js`             | Layout (tiled windows), top bar, notices, keyboard shortcuts, routing                                                                          |
-| `transcript.js`      | Messages, tool cards, approvals, breadcrumbs                                                                                                   |
-| `composer.js`        | Message box, chips, plan and goal bars, `@` file suggestions, `!` commands, ↑ and Ctrl+R history, long-paste placeholders                      |
-| `history.js`         | What this browser sent, for ↑ and Ctrl+R                                                                                                       |
-| `files.js`           | `@` mentions: the folder's file list, fetched once and checked in the background, and matched here as people type                              |
-| `commands.js`        | Slash commands and prompt templates                                                                                                            |
-| `sheets.js`          | The menu and every sheet, the file viewer and find in session among them                                                                       |
-| `peeks.js`           | Peek tiles: their switch, which sessions get one and in what order, the column and the strip, the watch list                                   |
-| `chat.js`            | People panel: chat, pins, notes                                                                                                                |
-| `sessions.js`        | Session list (sidebar, drawer), selecting rows and archiving them with undo (`setArchived`), the folded rail, the wide home screen, sign-in    |
-| `notify.js`, `sw.js` | Push, the icon badge, approvals from notifications, shares                                                                                     |
-| `share.js`           | Share to Pi                                                                                                                                    |
-| `ui.js`              | htm binding, Markdown, icons, `Sheet`, `Diff`, `usePresence` (animate out), `useSlide` (sliding indicators)                                    |
-| `theme.js`           | Appearance: palettes as CSS variables, Follow desktop, tiling, motion, text size, sidebar shape, pins; the theme reveal                        |
-| `themes.js`          | Omarchy's themes as palettes, generated from `/usr/share/omarchy/themes/*/colors.toml`                                                         |
-| `launcher.js`        | The Ctrl/⌘+K launcher: sessions, actions, and themes, with live theme previews                                                                 |
-| `browser.js`         | The Browser panel: frames by long polling, taps, drags, wheel, and keys as input events, the address bar, sizes, the console, the start screen |
+| File                                             | Owns                                                                                                                                           |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `store.js`                                       | State, the event stream (SSE, or long polling when a tunnel holds it back), `api()`, `actions`                                                 |
+| `app.js`                                         | Layout (tiled windows), top bar, notices, keyboard shortcuts, routing                                                                          |
+| `transcript.js`                                  | Messages, tool cards, approvals, breadcrumbs                                                                                                   |
+| `composer.js`                                    | Message box, chips, plan and goal bars, `@` file suggestions, `!` commands, ↑ and Ctrl+R history, long-paste placeholders                      |
+| `voice.js`, `voice-input.js`, `voice-worklet.js` | Dictation controls (Stop to edit, Send to submit), browser microphone lifecycle, local STT transport, and mono 16 kHz PCM capture              |
+| `history.js`                                     | What this browser sent, for ↑ and Ctrl+R                                                                                                       |
+| `files.js`                                       | `@` mentions: the folder's file list, fetched once and checked in the background, and matched here as people type                              |
+| `commands.js`                                    | Slash commands and prompt templates                                                                                                            |
+| `sheets.js`                                      | The menu and every sheet, the file viewer and find in session among them                                                                       |
+| `peeks.js`                                       | Peek tiles: their switch, which sessions get one and in what order, the column and the strip, the watch list                                   |
+| `chat.js`                                        | People panel: chat, pins, notes                                                                                                                |
+| `sessions.js`                                    | Session list (sidebar, drawer), selecting rows and archiving them with undo (`setArchived`), the folded rail, the wide home screen, sign-in    |
+| `notify.js`, `sw.js`                             | Push, the icon badge, approvals from notifications, shares                                                                                     |
+| `share.js`                                       | Share to Pi                                                                                                                                    |
+| `ui.js`                                          | htm binding, Markdown, icons, `Sheet`, `Diff`, `usePresence` (animate out), `useSlide` (sliding indicators)                                    |
+| `theme.js`                                       | Appearance: palettes as CSS variables, Follow desktop, tiling, motion, text size, sidebar shape, pins; the theme reveal                        |
+| `themes.js`                                      | Omarchy's themes as palettes, generated from `/usr/share/omarchy/themes/*/colors.toml`                                                         |
+| `launcher.js`                                    | The Ctrl/⌘+K launcher: sessions, actions, and themes, with live theme previews                                                                 |
+| `browser.js`                                     | The Browser panel: frames by long polling, taps, drags, wheel, and keys as input events, the address bar, sizes, the console, the start screen |
 
 ## How a message travels
 
