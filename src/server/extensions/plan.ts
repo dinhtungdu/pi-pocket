@@ -254,6 +254,10 @@ export function blockedInPlanMode(tool: string, args: Record<string, unknown>): 
         return undefined;
     }
 
+    if (tool === "sessions" && ["list", "read", "schedule-list"].includes(String(args.action))) {
+        return undefined;
+    }
+
     // Asking how a subagent does, or stopping it, changes nothing.
     if (tool === "subagent" && (args.action === "status" || args.action === "stop")) {
         return undefined;

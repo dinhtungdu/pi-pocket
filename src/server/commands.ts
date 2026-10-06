@@ -15,6 +15,7 @@ import {
     type TextContent,
 } from "@earendil-works/pi-ai";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
+import { configure } from "@earendil-works/pi-durable";
 import type {
     AgentChange,
     ConversationCreateOptions,
@@ -28,6 +29,7 @@ import type { User } from "./config.ts";
 import {
     AuthorsDoc,
     ChatDoc,
+    SessionReceiptsDoc,
     NotesDoc,
     PinsDoc,
     PlanDoc,
@@ -145,6 +147,7 @@ export class Commands {
     async createSession(
         user: User,
         request: { cwd?: string; title?: string; worktree?: unknown },
+        receipt?: { key?: string; agent?: AgentChange },
     ): Promise<{ id: ConversationId }> {
         const app = this.#app;
 
@@ -166,33 +169,45 @@ export class Commands {
             request.worktree === true,
             title ?? basename(folder),
             async ({ cwd, worktree }) => {
-                const conversation = await app.harness.createConversation(
-                    {
+                return app.harness.commit(async (tx) => {
+                    const receipts =
+                        receipt === undefined ? undefined : await tx.doc(SessionReceiptsDoc);
+                    const existing =
+                        receipt?.key === undefined ? undefined : receipts?.creates[receipt.key];
+
+                    if (existing !== undefined) {
+                        return { id: existing };
+                    }
+
+                    const conversation = await tx.createConversation({
                         ownership: { kind: "ownerless" },
-                        agent: {
-                            cwd,
-                            ...(initial.model === undefined ? {} : { model: initial.model }),
-                            ...(initial.thinkingLevel === undefined
-                                ? {}
-                                : { thinkingLevel: initial.thinkingLevel }),
-                        },
-                        init: async (tx, id) => {
-                            const sessions = await tx.doc(SessionsDoc);
+                    });
 
-                            sessions.items[String(id)] = {
-                                cwd,
-                                createdAt: now,
-                                updatedAt: now,
-                                createdBy: user.id,
-                                ...(title === undefined ? {} : { title }),
-                                ...(worktree === undefined ? {} : { worktree }),
-                            };
-                        },
-                    },
-                    context,
-                );
+                    await configure(tx, conversation.id, {
+                        cwd,
+                        ...(initial.model === undefined ? {} : { model: initial.model }),
+                        ...(initial.thinkingLevel === undefined
+                            ? {}
+                            : { thinkingLevel: initial.thinkingLevel }),
+                        ...receipt?.agent,
+                    });
+                    const sessions = await tx.doc(SessionsDoc);
 
-                return { id: conversation.id };
+                    sessions.items[String(conversation.id)] = {
+                        cwd,
+                        createdAt: now,
+                        updatedAt: now,
+                        createdBy: user.id,
+                        ...(title === undefined ? {} : { title }),
+                        ...(worktree === undefined ? {} : { worktree }),
+                    };
+
+                    if (receipts !== undefined && receipt?.key !== undefined) {
+                        receipts.creates[receipt.key] = conversation.id;
+                    }
+
+                    return { id: conversation.id };
+                }, context);
             },
         );
     }
@@ -323,6 +338,7 @@ export class Commands {
         id: ConversationId,
         user: User,
         patch: { title?: string; archived?: boolean },
+        archiveKey?: string,
     ): Promise<void> {
         const app = this.#app;
 
@@ -335,8 +351,14 @@ export class Commands {
         }
 
         const before = app.sessionMeta(id);
+        const applied = await app.harness.commit(async (tx) => {
+            const receipts =
+                archiveKey === undefined ? undefined : await tx.doc(SessionReceiptsDoc);
 
-        await app.harness.commit(async (tx) => {
+            if (archiveKey !== undefined && receipts?.archives?.[archiveKey] === true) {
+                return false;
+            }
+
             const sessions = await tx.doc(SessionsDoc);
             const meta = sessions.items[String(id)];
 
@@ -353,7 +375,19 @@ export class Commands {
             if (patch.archived !== undefined) {
                 meta.archived = patch.archived;
             }
+
+            if (receipts !== undefined && archiveKey !== undefined) {
+                receipts.archives ??= {};
+                receipts.archives[archiveKey] = true;
+            }
+
+            return true;
         }, context);
+
+        if (!applied) {
+            return;
+        }
+
         const title = patch.title?.trim().slice(0, MAX_TITLE);
 
         if (title !== undefined && title !== "" && title !== before?.title) {
@@ -375,6 +409,7 @@ export class Commands {
         id: ConversationId,
         user: User,
         request: SubmitRequest,
+        sessionRequestId?: string,
     ): Promise<{ submissionId: SubmissionId }> {
         const app = this.#app;
 
@@ -437,7 +472,7 @@ export class Commands {
         }
 
         const content = parts.length === 1 ? body : parts;
-        const requestId = ownRequest(user.id, clientKey(request.requestId));
+        const requestId = sessionRequestId ?? ownRequest(user.id, clientKey(request.requestId));
         const submission = await conversation.submit(
             {
                 type: "input",
@@ -767,6 +802,7 @@ export class Commands {
 
         app.requireSee(user, id);
         await app.requireDriver(id, user);
+
         const handoff = optionalText(note, "note")?.trim() || undefined;
 
         if (handoff !== undefined && handoff.length > MAX_HANDOFF) {

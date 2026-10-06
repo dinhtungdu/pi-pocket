@@ -6,6 +6,7 @@ import { browserAvailable, setBrowserOpen } from "./browser.js";
 import { describeCall } from "./calls.js";
 import { DiffBlock } from "./diff.js";
 import { Highlighted } from "./rich.js";
+import { conversationReferences } from "./conversation-mentions.js";
 import {
     actions,
     attempt,
@@ -104,8 +105,43 @@ function openMessage(event, entryId) {
  */
 let settledFor = null;
 
-/** A message's text with its @mentions of files as buttons that open them. Mentions of people stay text. */
+/** References only navigate: reading or messaging another conversation remains an explicit tool action. */
 function MentionedText({ text }) {
+    const references = conversationReferences(text);
+
+    if (references.length > 0) {
+        const linked = [];
+        let start = 0;
+
+        for (const reference of references) {
+            linked.push(html`<${MentionedText} text=${text.slice(start, reference.start)} />`);
+            linked.push(html`<a
+                class="file-mention"
+                href=${`/s/${reference.id}`}
+                title=${`Open conversation #${reference.id}`}
+                onClick=${(event) => {
+                    if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                    ) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    navigate(reference.id);
+                }}
+            >${reference.label}</a>`);
+            start = reference.end;
+        }
+
+        linked.push(html`<${MentionedText} text=${text.slice(start)} />`);
+
+        return linked;
+    }
+
     const parts = [];
     let last = 0;
 
@@ -140,6 +176,24 @@ function MentionedText({ text }) {
 
 function UserEntry({ entry, view, users }) {
     const [fresh] = useState(() => settledFor !== null && settledFor === view.conversation?.id);
+    const sessionReport =
+        /^\[(?:Session|Chief) report from session (\d+); no reply needed\]\s?([\s\S]*)$/.exec(
+            entry.text,
+        );
+
+    if (sessionReport) {
+        const [, id, text] = sessionReport;
+        const failed = text.startsWith("failed:");
+
+        return html`<div class=${`report ${failed ? "failed" : ""} ${fresh ? "enter" : ""}`}>
+            <div class="report-head">
+                <span class="report-name">Session ${id}</span> ${failed ? "failed" : "answered"}
+                <button class="link" onClick=${() => navigate(Number(id))}>Open →</button>
+            </div>
+            ${text && html`<${Collapsible} text=${text} />`}
+        </div>`;
+    }
+
     const report = REPORT.exec(entry.text);
 
     if (report) {
@@ -472,6 +526,7 @@ function ToolCard({ call, result, slot, approval, entryId }) {
             ? (details?.conversationId ??
               view.subagents.find((agent) => agent.name === args.name)?.conversationId)
             : undefined;
+    const project = call.name === "sessions" ? details?.sessionId : undefined;
     const decision = view.decisions?.[call.id];
 
     return html`<div class=${`tool ${status} ${settled ? "settled" : ""}`}>
@@ -532,6 +587,12 @@ function ToolCard({ call, result, slot, approval, entryId }) {
             child !== undefined &&
             html`<button class="artifact-link" onClick=${() => navigate(child)}>
                 Open ${args.name ?? "subagent"} →
+            </button>`
+        }
+        ${
+            project !== undefined &&
+            html`<button class="artifact-link" onClick=${() => navigate(project)}>
+                Open session ${project} →
             </button>`
         }
         ${

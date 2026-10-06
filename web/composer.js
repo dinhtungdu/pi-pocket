@@ -1,4 +1,4 @@
-// The message box: send, steer or queue while busy, attach files, mention files with @, run commands with !, recall
+// The message box: send, steer or queue while busy, attach files, reference conversations/files with @, run !, recall
 // what was sent before (↑, Ctrl+R), fold long pastes, pick the model, stop.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Avatar } from "./avatar.js";
@@ -11,6 +11,11 @@ import {
     suggestCommands,
 } from "./commands.js";
 import { loadFiles, mentionAt, mentionText, suggestFiles } from "./files.js";
+import {
+    CONVERSATION_REFERENCE,
+    conversationMention,
+    suggestConversations,
+} from "./conversation-mentions.js";
 import { remember, searchHistory, sentHistory } from "./history.js";
 import {
     actions,
@@ -212,7 +217,7 @@ export function Composer() {
     // Slash command suggestions: the highlighted one, and whether Escape hid the list.
     const [pick, setPick] = useState(0);
     const [hideCommands, setHideCommands] = useState(false);
-    // File mentions: where the caret is, and the mention Escape hid (by where it starts).
+    // Conversation/file references: the caret, and the picker Escape hid (by where it starts).
     const [caret, setCaret] = useState(() => drafts.get(conversationId).length);
     const [hiddenMention, setHiddenMention] = useState(null);
     const [pastes, setPastes] = useState(() => loadPastes(conversationId));
@@ -315,16 +320,22 @@ export function Composer() {
     const shell = text.startsWith("!")
         ? { context: !text.startsWith("!!"), command: text.replace(/^!!?/, "").trim() }
         : null;
-    const mentionsFiles = !shell && !parsed && MENTIONS_FILE.test(text);
+    const mentionsFiles =
+        !shell && !parsed && MENTIONS_FILE.test(text.replace(CONVERSATION_REFERENCE, ""));
     const pasted = PASTED.test(text);
 
     PASTED.lastIndex = 0;
-    // The @path being typed at the caret, and the files that match it. Slash command names come first.
+    // @ searches visible conversations and files. Selection inserts a reference, never sends a message.
     const typed = suggestions.length === 0 && !searching && !shell ? mentionAt(text, caret) : null;
     const mention = typed && typed.start !== hiddenMention ? typed : null;
     const found = mention ? suggestFiles(mention.query) : null;
-    const matches = found?.items ?? [];
-    const chosenFile = matches[Math.min(pick, matches.length - 1)];
+    const matches = mention
+        ? [
+              ...suggestConversations(store.state.sessions, conversationId, mention.query),
+              ...(found?.items ?? []),
+          ]
+        : [];
+    const chosenMention = matches[Math.min(pick, matches.length - 1)];
 
     // A new mention checks the folder's list again, in the background; a hidden one shows again once it is gone.
     useEffect(() => {
@@ -372,11 +383,11 @@ export function Composer() {
     };
 
     /**
-     * A picked file goes into the box in place of what was typed, with a space after it. A folder goes in with its "/",
-     * and its own files show next.
+     * Conversation ids survive renames. Files retain their existing @path syntax; folders keep their trailing "/".
      */
-    const chooseFile = (item) => {
-        const written = mentionText(item.path);
+    const chooseMention = (item) => {
+        const written =
+            item.kind === "conversation" ? conversationMention(item) : mentionText(item.path);
         const rest = text.slice(mention.end);
         const space = item.dir || /^\s/.test(rest) ? "" : " ";
         const at = mention.start + written.length + (item.dir ? 0 : 1);
@@ -616,6 +627,13 @@ export function Composer() {
             }
         }
 
+        if (mention && event.key === "Escape" && !event.isComposing) {
+            event.preventDefault();
+            setHiddenMention(mention.start);
+
+            return;
+        }
+
         if (matches.length > 0 && !event.isComposing) {
             const move = { ArrowDown: 1, ArrowUp: -1 }[event.key];
 
@@ -628,22 +646,18 @@ export function Composer() {
                 return;
             }
 
-            if (event.key === "Escape") {
-                event.preventDefault();
-                setHiddenMention(mention.start);
-
-                return;
-            }
-
-            // Tab completes; Enter completes too, unless the file's path is typed out already, which sends.
-            const typedOut = !chosenFile.dir && mention.query === chosenFile.path;
+            // Conversations must be selected to bind their id; a fully typed file path may be sent as before.
+            const typedOut =
+                chosenMention.kind !== "conversation" &&
+                !chosenMention.dir &&
+                mention.query === chosenMention.path;
 
             if (
                 event.key === "Tab" ||
                 (event.key === "Enter" && !event.shiftKey && !coarse && !typedOut)
             ) {
                 event.preventDefault();
-                chooseFile(chosenFile);
+                chooseMention(chosenMention);
 
                 return;
             }
@@ -773,7 +787,7 @@ export function Composer() {
             : "Queue a follow-up…"
         : coarse
           ? "Message Pi…"
-          : "Message Pi… (/ commands · @ files · ! shell)";
+          : "Message Pi… (/ commands · @ sessions/files · ! shell)";
     const inbox = view.inbox ?? [];
     const { me, users } = store.state;
     const queuedBy = (item) =>
@@ -921,24 +935,23 @@ export function Composer() {
                 }
                 ${
                     mention &&
-                    (matches.length > 0 || found.loading) &&
                     html`<div
                         class="commands file-options"
                         role="listbox"
-                        aria-label="Files"
+                        aria-label="Conversations and files"
                         ref=${list}
                     >
                         ${matches.map(
                             (item) => html`<button
-                                key=${item.path}
-                                class=${`command file-option ${item === chosenFile ? "on" : ""}`}
+                                key=${item.kind === "conversation" ? `session-${item.id}` : item.path}
+                                class=${`command file-option ${item === chosenMention ? "on" : ""}`}
                                 role="option"
-                                aria-selected=${item === chosenFile}
+                                aria-selected=${item === chosenMention}
                                 onMouseDown=${(event) => event.preventDefault()}
-                                onClick=${() => chooseFile(item)}
+                                onClick=${() => chooseMention(item)}
                             >
                                 <${Icon}
-                                    name=${item.dir ? "folder" : "file"}
+                                    name=${item.kind === "conversation" ? "chat" : item.dir ? "folder" : "file"}
                                     size=${14}
                                     class="file-icon"
                                 />
@@ -951,7 +964,8 @@ export function Composer() {
                                 </span>
                             </button>`,
                         )}
-                        ${matches.length === 0 && html`<div class="file-note">Finding files…</div>`}
+                        <div class="file-note">References add context only. They do not send to another session.</div>
+                        ${matches.length === 0 && html`<div class="file-note">${found.loading ? "Finding files…" : "No matching conversations or files."}</div>`}
                         ${
                             found.truncated &&
                             html`<div class="file-note">
