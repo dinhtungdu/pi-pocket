@@ -3,9 +3,11 @@ import { awaitWithContext } from "@earendil-works/chord/context";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { ConversationId, Extension, ModelRef, TaskId } from "@earendil-works/pi-durable";
 import type { Browsers } from "./browser.ts";
+import type { Sessions } from "./sessions.ts";
 import type { Goals } from "./goals.ts";
 import type { LancetGuard } from "./lancet.ts";
 import type { Schedules } from "./schedules.ts";
+import type { sessionQueue } from "./session-queue.ts";
 
 export interface ApprovalRequest {
     id: string;
@@ -127,6 +129,13 @@ export interface PocketHost {
     heldBack(conversationId: ConversationId): string | undefined;
     /** Call `listener` whenever the owner changes a spend limit; returns how to stop. */
     onLimitsChanged(listener: () => void): () => void;
+    /** Shared requester-scoped session operations. */
+    readonly sessions: Pick<
+        Sessions,
+        "list" | "read" | "create" | "message" | "setArchived" | "stop" | "schedules"
+    >;
+    /** Pending user messages, scoped to the current requester; withdrawal never stops active work. */
+    readonly sessionQueue: ReturnType<typeof sessionQueue>;
     /** Messages to Pi for later: the schedule tool sets up Pi's own. */
     readonly schedules: Pick<Schedules, "add" | "cancel" | "list" | "task">;
     /** Sessions' goals: the goals extension runs their checks and counts them. */

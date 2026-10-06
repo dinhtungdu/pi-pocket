@@ -8,6 +8,7 @@ import { describeCall } from "./calls.js";
 import { DiffBlock } from "./diff.js";
 import { fromServer } from "./peeks.js";
 import { Highlighted } from "./rich.js";
+import { conversationReferences } from "./conversation-mentions.js";
 import {
     actions,
     attempt,
@@ -125,8 +126,43 @@ function openMessage(event, entryId) {
  */
 let settledFor = null;
 
-/** A message's text with its @mentions of files as buttons that open them. Mentions of people stay text. */
+/** References only navigate: reading or messaging another conversation remains an explicit tool action. */
 function MentionedText({ text }) {
+    const references = conversationReferences(text);
+
+    if (references.length > 0) {
+        const linked = [];
+        let start = 0;
+
+        for (const reference of references) {
+            linked.push(html`<${MentionedText} text=${text.slice(start, reference.start)} />`);
+            linked.push(html`<a
+                class="file-mention"
+                href=${`/s/${reference.id}`}
+                title=${`Open conversation #${reference.id}`}
+                onClick=${(event) => {
+                    if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                    ) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    navigate(reference.id);
+                }}
+            >${reference.label}</a>`);
+            start = reference.end;
+        }
+
+        linked.push(html`<${MentionedText} text=${text.slice(start)} />`);
+
+        return linked;
+    }
+
     const parts = [];
     let last = 0;
 
@@ -214,6 +250,23 @@ function clock(at) {
  */
 function UserEntry({ entry, view, users }) {
     const [fresh] = useState(() => settledFor !== null && settledFor === view.conversation?.id);
+    const sessionReport =
+        /^\[(?:Session|Chief) report from session (\d+); no reply needed\]\s?([\s\S]*)$/.exec(
+            entry.text,
+        );
+
+    if (sessionReport) {
+        const [, id, text] = sessionReport;
+        const failed = text.startsWith("failed:");
+
+        return html`<div class=${`report ${failed ? "failed" : ""} ${fresh ? "enter" : ""}`}>
+            <div class="report-head">
+                <span class="report-name">Session ${id}</span> ${failed ? "failed" : "answered"}
+                <button class="link" onClick=${() => navigate(Number(id))}>Open →</button>
+            </div>
+            ${text && html`<${Collapsible} text=${text} />`}
+        </div>`;
+    }
 
     // A report has nobody's name on it: a person's message that looks like one is theirs.
     if (REPORT.test(entry.text) && entry.from === undefined && !view.authors?.[entry.id]) {
@@ -777,6 +830,7 @@ function ToolStep({ call, result, slot, approval, entryId, streaming, canRun, bu
             ? (details?.conversationId ??
               view.subagents.find((agent) => agent.name === args.name)?.conversationId)
             : undefined;
+    const project = call.name === "sessions" ? details?.sessionId : undefined;
     const glyph = GLYPHS[call.name] ?? describeCall(call).icon;
     const { label, subject } = stepWords(call);
     // Counted from everything once it is loaded: a long write's lines, a long edit's whole diff.
@@ -814,6 +868,16 @@ function ToolStep({ call, result, slot, approval, entryId, streaming, canRun, bu
                     class="step-open"
                     title=${`Open ${args.name ?? "the subagent"}`}
                     onClick=${() => navigate(child)}
+                >
+                    Open →
+                </button>`
+            }
+            ${
+                project !== undefined &&
+                html`<button
+                    class="step-open"
+                    title=${`Open session ${project}`}
+                    onClick=${() => navigate(project)}
                 >
                     Open →
                 </button>`

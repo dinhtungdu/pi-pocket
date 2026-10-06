@@ -31,6 +31,7 @@ import {
     type HarnessSettings,
     LiveDoc,
     type LiveState,
+    type Registry,
     type Storage,
     UsageDoc,
     type UsageState,
@@ -44,6 +45,7 @@ import { Browsers } from "./browser.ts";
 import type { BrowserState } from "./browser/page.ts";
 import { Collab, REACTIONS } from "./collab.ts";
 import { Commands, THINKING_LEVELS } from "./commands.ts";
+import { Sessions } from "./sessions.ts";
 import { APP_ROOT, ConfigStore, type User } from "./config.ts";
 import {
     ArtifactBodyDoc,
@@ -76,6 +78,7 @@ import { type ExtensionInfo, ExtensionLoader, prepareDropInFolder } from "./relo
 import { ResendTask } from "./resend.ts";
 import { type Client, reportingOf, Room, ROOM_DOCS, subagentView } from "./room.ts";
 import { Schedules } from "./schedules.ts";
+import { sessionQueue } from "./session-queue.ts";
 import { Shell } from "./shell.ts";
 import {
     loadSessionSkills,
@@ -219,6 +222,7 @@ export class PocketApp {
     host!: PocketHost;
     loader!: ExtensionLoader;
     readonly commands = new Commands(this);
+    readonly sessionsTool = new Sessions(this);
     readonly collab = new Collab(this);
     readonly alerts = new Alerts(this);
     readonly providers = new Providers(this);
@@ -350,7 +354,10 @@ export class PocketApp {
         registry.install(CodingTools);
         // Durable work of the app itself, whatever extension modules are on.
         registry.install(
-            defineExtension({ name: "pocket-core", tasks: [ResendTask, this.shell.task] }),
+            defineExtension({
+                name: "pocket-core",
+                tasks: [ResendTask, this.shell.task, this.sessionsTool.task],
+            }),
         );
         const host: PocketHost = {
             guard: this.guard,
@@ -370,6 +377,8 @@ export class PocketApp {
             notice: (level, message) => this.notice(level, message),
             heldBack: (conversationId) => this.spend.heldBack(conversationId),
             onLimitsChanged: (listener) => this.spend.onLimitsChanged(listener),
+            sessions: this.sessionsTool,
+            sessionQueue: sessionQueue(this),
             schedules: this.schedules,
             goals: this.goals,
             browsers: this.browsers,
@@ -399,7 +408,7 @@ export class PocketApp {
             {
                 models: this.models,
                 registry,
-                settings: this.#harnessSettings(),
+                settings: this.#harnessSettings(registry),
                 now: this.now,
                 env: ({ cwd }) => this.#env(cwd ?? this.defaultCwd),
                 conversationCreated: async (tx, conversation) => {
@@ -641,7 +650,7 @@ export class PocketApp {
         return sessionsChanged;
     }
 
-    #harnessSettings(): HarnessSettings {
+    #harnessSettings(registry: Registry): HarnessSettings {
         const settings = this.settings;
 
         const safe = <T>(read: () => T): T | undefined => {
@@ -653,6 +662,9 @@ export class PocketApp {
         };
 
         return {
+            get extensions() {
+                return registry.snapshot().installed();
+            },
             get stream() {
                 const provider = safe(() => settings.getProviderRetrySettings());
                 const idle = safe(() => settings.getHttpIdleTimeoutMs()) ?? 300_000;
