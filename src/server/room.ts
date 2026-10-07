@@ -50,6 +50,7 @@ import {
 } from "./projection.ts";
 import { SHELL_ENTRY } from "./shell.ts";
 import { describeRepeat } from "./when.ts";
+import { notificationDisplay, notificationOf, notificationText } from "./notifications.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -422,6 +423,7 @@ export class Room {
                     ? {
                           id: item.id,
                           mode: item.mode,
+                          ...notificationDisplay(item.entry.model),
                           ...(item.entry.kind === SHELL_ENTRY
                               ? {
                                     text: `$ ${String((item.entry.data as { command?: unknown } | undefined)?.command ?? "")}`,
@@ -431,10 +433,24 @@ export class Room {
                     : {
                           id: item.id,
                           mode: item.mode,
+                          ...(notificationOf(item.content) === undefined
+                              ? {}
+                              : {
+                                    notification: notificationOf(item.content),
+                                }),
                           text:
-                              typeof item.content === "string"
-                                  ? item.content
-                                  : JSON.stringify(item.content).slice(0, 500),
+                              notificationOf(item.content) !== undefined &&
+                              Array.isArray(item.content)
+                                  ? notificationText(
+                                        item.content
+                                            .flatMap((part) =>
+                                                part.type === "text" ? [part.text] : [],
+                                            )
+                                            .join("\n"),
+                                    )
+                                  : typeof item.content === "string"
+                                    ? item.content
+                                    : JSON.stringify(item.content).slice(0, 500),
                           ...this.#app.submitterOf(item.id as unknown as number, this),
                       },
             ),

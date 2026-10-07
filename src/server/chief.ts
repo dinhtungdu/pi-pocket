@@ -18,6 +18,7 @@ import { HttpError } from "./errors.ts";
 import { requestFor } from "./requests.ts";
 import { projectEntry } from "./projection.ts";
 import { mentionsHome } from "./session-references.ts";
+import { notificationPart } from "./notifications.ts";
 
 const context = BACKGROUND_CONTEXT;
 const MAX_MESSAGE = 20_000;
@@ -169,7 +170,7 @@ export class Chief {
                     );
 
                     // Reports are passive user entries in the originating conversation, never new model work.
-                    // Preserve the native report prefix so the existing renderer provides its Open link.
+                    // Structured display metadata leaves passive delivery and replay IDs unchanged.
                     if (existing === undefined) {
                         await (
                             await app.conversation(runtime.conversationId)
@@ -181,7 +182,16 @@ export class Chief {
                                     model: [
                                         {
                                             role: "user",
-                                            content: [{ type: "text", text: content }],
+                                            content: [
+                                                notificationPart(content, {
+                                                    type: checkpoint.text.startsWith("failed:")
+                                                        ? "failure"
+                                                        : "completion",
+                                                    source: "session",
+                                                    name: `Session ${reporter.input.target}`,
+                                                    sessionId: Number(reporter.input.target),
+                                                }),
+                                            ],
                                             timestamp: Date.now(),
                                         },
                                     ],

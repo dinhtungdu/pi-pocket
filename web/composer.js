@@ -786,7 +786,7 @@ export function Composer() {
         : coarse
           ? "Message Pi…"
           : "Message Pi… (/ commands · @ sessions/files · ! shell)";
-    const inbox = view.inbox ?? [];
+    const inbox = (view.inbox ?? []).filter((item) => !item.notification);
     const { me, users } = store.state;
     const queuedBy = (item) =>
         item.by === undefined

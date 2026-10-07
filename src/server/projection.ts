@@ -4,6 +4,7 @@
  */
 import type { EntryRecord, LiveState, UsageState } from "@earendil-works/pi-durable";
 import { SHELL_ENTRY, type ShellData } from "./shell.ts";
+import { notificationOf, notificationText, type Notification } from "./notifications.ts";
 
 export type ClientBlock =
     | { type: "text"; text: string }
@@ -17,7 +18,15 @@ export type ClientBlock =
       };
 
 export type ClientEntry =
-    | { id: number; kind: "user"; text: string; images: number; from?: string; files?: string[] }
+    | {
+          id: number;
+          kind: "user";
+          text: string;
+          images: number;
+          from?: string;
+          files?: string[];
+          notification?: Notification;
+      }
     | {
           id: number;
           kind: "assistant";
@@ -250,6 +259,7 @@ export function projectEntry(entry: EntryRecord, full = false): ClientEntry | un
         case "pi.user": {
             const content = message?.content;
             const images = countImages(content);
+            const notification = notificationOf(content);
             // Files sent along (parts after the message's own text) show by name: their contents would only weigh down
             // every browser's view.
             const parts = Array.isArray(content) ? (content as ContentPart[]) : undefined;
@@ -264,6 +274,11 @@ export function projectEntry(entry: EntryRecord, full = false): ClientEntry | un
             const text = textOfContent(
                 parts === undefined ? content : parts.filter((part, index) => !isFile(part, index)),
             );
+
+            if (notification !== undefined) {
+                return { id, kind: "user", text: notificationText(text), images, notification };
+            }
+
             const named = files.length === 0 ? {} : { files };
             const prefixed = FROM_PREFIX.exec(text);
 

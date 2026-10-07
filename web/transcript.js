@@ -1,6 +1,7 @@
 // The conversation: messages, thinking, tool cards, artifacts, subagents, approvals, and the live run.
 import { Component } from "preact";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { groupActivity } from "./activity.js";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { browserAvailable, setBrowserOpen } from "./browser.js";
 import { personColor } from "./chat.js";
 import { conversationReferences } from "./conversation-mentions.js";
@@ -33,7 +34,6 @@ import {
     Thumb,
 } from "./ui.js";
 
-const REPORT = /^\[subagent (\S+) (answered|failed)([^\]]*)\]\s?([\s\S]*)$/;
 /** How a scheduled message starts (see src/server/schedules.ts). */
 const SCHEDULED = "[scheduled] ";
 /** A goal's check that did not pass, as Pi is told about it (see src/server/extensions/goals.ts): what, then its output. */
@@ -167,45 +167,89 @@ function MentionedText({ text }) {
     return parts;
 }
 
+function ReportCard({ name, verb, text, sessionId, fresh }) {
+    const [open, setOpen] = useState(false);
+    const bodyId = useId();
+    const title = store.state.sessions.find((session) => session.id === sessionId)?.title || name;
+    const preview = plainText(text).replace(/\s+/g, " ").trim();
+
+    return html`<div
+        class=${`report report-card ${verb === "failed" ? "failed" : ""} ${fresh ? "enter" : ""}`}
+    >
+        <div class="report-head">
+            <span class="report-name" title=${title}>${title}</span>
+            <span>${verb}</span>
+        </div>
+        ${
+            !open &&
+            text &&
+            html`<div class="report-preview">
+                ${preview.length > 180 ? `${preview.slice(0, 180)}…` : preview}
+            </div>`
+        }
+        <div class="report-actions">
+            <button
+                class="link"
+                type="button"
+                aria-expanded=${open}
+                aria-controls=${bodyId}
+                aria-label=${`${open ? "Collapse" : "Expand"} report from ${title}`}
+                onClick=${() => setOpen(!open)}
+            >
+                ${open ? "Collapse" : "Expand"}
+            </button>
+            ${
+                sessionId !== undefined &&
+                html`<button class="link" type="button" onClick=${() => navigate(sessionId)}>
+                    Open session →
+                </button>`
+            }
+        </div>
+        <div id=${bodyId} hidden=${!open}>
+            ${open && html`<${Markdown} text=${text} />`}
+        </div>
+    </div>`;
+}
+
+function NotificationCard({ entry, fresh }) {
+    const notification = entry.notification;
+    const verb =
+        notification.type === "failure"
+            ? "failed"
+            : notification.type === "review"
+              ? "review"
+              : "answered";
+
+    return html`<${ReportCard}
+        name=${notification.name}
+        verb=${verb}
+        text=${entry.text}
+        sessionId=${notification.sessionId}
+        fresh=${fresh}
+    />`;
+}
+
+export function ActivityGroup({ entries, queued = false }) {
+    return html`<details class="activity-group">
+        <summary>${queued ? "Queued activity" : "Activity"} · ${entries.length}</summary>
+        <div class="activity-content">
+            ${entries.map(
+                (entry) => html`<div
+                    key=${entry.id}
+                    id=${`${queued ? "queued-notification" : "entry"}-${entry.id}`}
+                >
+                    <${NotificationCard} entry=${entry} />
+                </div>`,
+            )}
+        </div>
+    </details>`;
+}
+
 function UserEntry({ entry, view, users }) {
     const [fresh] = useState(() => settledFor !== null && settledFor === view.conversation?.id);
-    const chiefReport = /^\[Chief report from session (\d+); no reply needed\]\s?([\s\S]*)$/.exec(
-        entry.text,
-    );
 
-    if (chiefReport) {
-        const [, id, text] = chiefReport;
-        const failed = text.startsWith("failed:");
-
-        return html`<div class=${`report ${failed ? "failed" : ""} ${fresh ? "enter" : ""}`}>
-            <div class="report-head">
-                <span class="report-name">Session ${id}</span> ${failed ? "failed" : "answered"}
-                <button class="link" onClick=${() => navigate(Number(id))}>Open →</button>
-            </div>
-            ${text && html`<${Collapsible} text=${text} />`}
-        </div>`;
-    }
-
-    const report = REPORT.exec(entry.text);
-
-    if (report) {
-        const [, name, verb, , text] = report;
-        const child = view.subagents.find((agent) => agent.name === name);
-
-        return html`<div
-            class=${`report ${verb === "failed" ? "failed" : ""} ${fresh ? "enter" : ""}`}
-        >
-            <div class="report-head">
-                <span class="report-name">${name}</span> ${verb}
-                ${
-                    child &&
-                    html`<button class="link" onClick=${() => navigate(child.conversationId)}>
-                        Open →
-                    </button>`
-                }
-            </div>
-            ${text && html`<${Collapsible} text=${text} />`}
-        </div>`;
+    if (entry.notification) {
+        return html`<${NotificationCard} entry=${entry} fresh=${fresh} />`;
     }
 
     const check = GOAL_CHECK.exec(entry.text);
@@ -905,8 +949,10 @@ function History({ firstId, results, keepPlace }) {
     }
 
     return html`<div class="history">
-        ${history.filter(isRow).map(
-            (entry) => html`<${Row}
+        ${groupActivity(history.filter(isRow)).map((entry) =>
+            entry.activity
+                ? html`<${ActivityGroup} key=${entry.id} entries=${entry.activity} />`
+                : html`<${Row}
                 key=${entry.id}
                 entry=${entry}
                 results=${results}
@@ -1363,8 +1409,10 @@ export function Transcript() {
                     </p>
                 </div>`
             }
-            ${rows.slice(start).map(
-                (entry) => html`<${Row}
+            ${groupActivity(rows.slice(start)).map((entry) =>
+                entry.activity
+                    ? html`<${ActivityGroup} key=${entry.id} entries=${entry.activity} />`
+                    : html`<${Row}
                     key=${entry.id}
                     entry=${entry}
                     results=${results}
@@ -1373,6 +1421,13 @@ export function Transcript() {
                     deps=${rowDeps(entry, results, slots, approvals)}
                 />`,
             )}
+            ${
+                (view.inbox ?? []).some((item) => item.notification) &&
+                html`<${ActivityGroup}
+                entries=${view.inbox.filter((item) => item.notification)}
+                queued=${true}
+            />`
+            }
             <${PendingShells} conversationId=${conversation.id} rows=${rows} />
             ${
                 partial.length > 0 &&

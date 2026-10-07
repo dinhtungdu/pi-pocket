@@ -1344,6 +1344,60 @@ pre.diff .del {
     font-family: var(--mono);
 }
 
+.report-card .report-head > .report-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.report-card .report-head > span:last-child {
+    flex-shrink: 0;
+}
+
+.activity-group {
+    border: 1px solid var(--line);
+    margin: 8px 0;
+    min-width: 0;
+}
+
+.activity-group > summary {
+    cursor: pointer;
+    padding: 12px;
+    min-height: 44px;
+    box-sizing: border-box;
+}
+
+.activity-group > summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.activity-content {
+    padding: 0 12px 12px;
+    overflow-wrap: anywhere;
+}
+
+.report-preview {
+    font-size: 0.85rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+}
+
+.report-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.report-actions .link {
+    min-height: 44px;
+}
+
 .approval {
     border: 2px solid var(--warn);
     background: var(--warn-soft);

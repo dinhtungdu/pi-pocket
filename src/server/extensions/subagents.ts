@@ -22,6 +22,7 @@ import {
 import { REPORT_PREFIX, SubagentsDoc } from "../docs.ts";
 import type { PocketHost } from "../host.ts";
 import { requestFor } from "../requests.ts";
+import { notificationPart } from "../notifications.ts";
 
 function textOf(message: AssistantMessage | undefined): string {
     return (message?.content ?? [])
@@ -115,7 +116,17 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 
             if (report !== undefined) {
                 const parent = (await runtime.conversation(runtime.conversationId, context))!;
-                const input = { type: "input", content: report, whenBusy: "followUp" } as const;
+                const content = [
+                    notificationPart(report, {
+                        type: report.startsWith(`${REPORT_PREFIX}${reporter.input.name} failed:`)
+                            ? "failure"
+                            : "completion",
+                        source: "subagent",
+                        name: reporter.input.name,
+                        sessionId: Number(reporter.input.conversationId),
+                    }),
+                ];
+                const input = { type: "input", content, whenBusy: "followUp" } as const;
 
                 await parent.submit(
                     { ...input, requestId: `subagent-report:${reporter.id}` },

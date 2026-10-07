@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { InboxDoc, type ConversationId } from "@earendil-works/pi-durable";
 import type { PocketApp } from "./app.ts";
 import { HttpError } from "./errors.ts";
+import { notificationOf } from "./notifications.ts";
 
 /** Requester-scoped access to the same pending inputs and withdrawal used by the browser. */
 export function sessionQueue(app: PocketApp) {
@@ -30,7 +31,7 @@ export function sessionQueue(app: PocketApp) {
             const inbox = await app.harness.snapshot(InboxDoc, target, BACKGROUND_CONTEXT);
 
             return (inbox?.items ?? []).flatMap((item) => {
-                if (item.mode === "write") {
+                if (item.mode === "write" || notificationOf(item.content) !== undefined) {
                     return [];
                 }
 
