@@ -52,6 +52,7 @@ import {
     projectStats,
 } from "./projection.ts";
 import { describeRepeat } from "./when.ts";
+import { TreeMemoryDoc, type TreeState, memoryStatus, TREE_EXTENSION } from "./tree-memory.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -70,6 +71,7 @@ export const ROOM_DOCS = new Set(
         PlanDoc,
         ScheduleDoc,
         GoalDoc,
+        TreeMemoryDoc,
     ].map((doc) => doc.definition.kind),
 );
 /** A typing indicator lasts this long unless the browser renews it. */
@@ -166,6 +168,7 @@ export class Room {
     plan: { on: boolean; by?: string; at?: number } = { on: false };
     schedules: Record<string, Schedule> = {};
     goal: Goal | undefined;
+    treeMemory = memoryStatus(undefined);
     /** Who is typing where, by user id. Memory only: it means nothing after a restart. */
     readonly #typing = new Map<string, { where: TypingPlace; timer: NodeJS.Timeout }>();
     parent: { id: ConversationId; title: string } | undefined;
@@ -217,6 +220,7 @@ export class Room {
             ...((await harness.snapshot(ScheduleDoc, this.id, context))?.items ?? {}),
         };
         this.goal = (await harness.snapshot(GoalDoc, this.id, context))?.goal;
+        this.treeMemory = memoryStatus(await harness.snapshot(TreeMemoryDoc, this.id, context));
 
         if (owner !== undefined) {
             const siblings =
@@ -286,6 +290,8 @@ export class Room {
             this.schedules = { ...((value?.items as Record<string, Schedule>) ?? {}) };
         } else if (kind === GoalDoc.definition.kind) {
             this.goal = (value?.goal as Goal | undefined) ?? undefined;
+        } else if (kind === TreeMemoryDoc.definition.kind) {
+            this.treeMemory = memoryStatus((value as TreeState | null) ?? undefined);
         }
 
         if (kind === AuthorsDoc.definition.kind) {
@@ -406,6 +412,10 @@ export class Room {
             turns: this.turns,
             decisions: this.decisions,
             plan: this.plan,
+            treeMemory: {
+                ...this.treeMemory,
+                available: this.#app.loader.extensionNames().includes(TREE_EXTENSION),
+            },
             schedules: Object.values(this.schedules)
                 .sort((a, b) => a.next - b.next)
                 .map(({ id, text, next, every, by, runs }) => ({

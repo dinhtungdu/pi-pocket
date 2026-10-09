@@ -18,6 +18,9 @@ import {
     type Conversation,
     type ConversationId,
     type Cursor,
+    type EntryId,
+    ResetEntry,
+    type EntryRecord,
     createRegistry,
     defineExtension,
     type DocumentCommitChange,
@@ -62,6 +65,8 @@ import { type ApprovalRequest, Approvals, type PocketHost } from "./host.ts";
 import { type GuardStatus, LancetGuard } from "./lancet.ts";
 import { takeLock } from "./lock.ts";
 import { modelList, resolveModel } from "./models.ts";
+import { TREE_TASKS, treeRegistry, TreeMemoryDoc, type TreeState } from "./tree-memory.ts";
+import { treeMemoryHost } from "./tree-memory-host.ts";
 import { configureHttp } from "./net.ts";
 import { snippet } from "./projection.ts";
 import {
@@ -127,6 +132,7 @@ export class PocketApp {
     /** Set by the launcher over IPC; undefined when the server runs on its own. */
     access: AccessInfo | undefined;
     harness!: Harness;
+    treeMemory!: ReturnType<typeof treeMemoryHost>;
     models!: ModelRuntime;
     settings!: SettingsManager;
     loader!: ExtensionLoader;
@@ -259,9 +265,41 @@ export class PocketApp {
         registry.install(
             defineExtension({
                 name: "pocket-core",
-                tasks: [ResendTask, this.shell.task, this.sessionsTool.task],
+                tasks: [ResendTask, this.shell.task, this.sessionsTool.task, ...TREE_TASKS],
             }),
         );
+        const tree = treeRegistry(
+            registry,
+            async (id, context) =>
+                (await (await this.harness.submission(id, context))?.status(context))?.entry,
+            async (id, min, max, context) => {
+                const conversation = await this.harness.conversation(id, context);
+
+                if (conversation === undefined) {
+                    throw new Error("Tree memory conversation unavailable");
+                }
+
+                const entries: EntryRecord[] = [];
+                let cursor: Cursor | undefined;
+
+                do {
+                    const page = await conversation.entries(
+                        { minEntryId: min as EntryId, maxEntryId: max as EntryId },
+                        256,
+                        cursor,
+                        context,
+                    );
+
+                    entries.push(...page.items);
+                    cursor = page.next;
+                } while (cursor !== undefined);
+
+                return entries.reverse();
+            },
+            (id) => this.spend.heldBack(id),
+        );
+
+        this.treeMemory = treeMemoryHost(this, tree.compatible);
         const host: PocketHost = {
             guard: this.guard,
             approvals: this.approvals,
@@ -282,6 +320,7 @@ export class PocketApp {
             schedules: this.schedules,
             goals: this.goals,
             browsers: this.browsers,
+            treeMemory: this.treeMemory,
         };
         const dropIn = join(this.dataDir, "extensions");
 
@@ -305,7 +344,7 @@ export class PocketApp {
             storage,
             {
                 models: this.models,
-                registry,
+                registry: tree.registry,
                 settings: this.#harnessSettings(registry),
                 now: this.now,
                 env: ({ cwd }) => this.#env(cwd ?? this.defaultCwd),
@@ -362,6 +401,9 @@ export class PocketApp {
         if (this.guardOn()) {
             void this.guard.warm().catch(() => {});
         }
+
+        // Discover committed entries whose deferred notification a crash lost; reuse the persisted cursor/owner.
+        await Promise.all(conversations.map((id) => this.treeMemory.arrived(id, context)));
 
         // Work a previous process left unfinished continues now.
         this.harness.resume();
@@ -426,6 +468,7 @@ export class PocketApp {
     /** Every commit, as Pi Durable publishes it: what the app keeps in memory follows it, and so do the open views. */
     #committed(publication: CommitPublication): void {
         let sessionsChanged = false;
+        const treeArrivals = new Set<ConversationId>();
 
         // Usage in a commit is from the work that was going on before it: it is counted before a message the same
         // commit places changes whom Pi works for.
@@ -444,9 +487,61 @@ export class PocketApp {
                 if (this.#documentCommitted(change)) {
                     sessionsChanged = true;
                 }
+
+                if (
+                    change.record.kind === TreeMemoryDoc.definition.kind &&
+                    change.conversationId !== undefined &&
+                    (change.value as TreeState | null)?.phase === "ready" &&
+                    (change.value as TreeState).worker === undefined
+                ) {
+                    // Initial finite backfill just became usable. Catch entries committed while it was warming.
+                    treeArrivals.add(change.conversationId);
+                }
+
+                if (
+                    change.record.kind === LiveDoc.definition.kind &&
+                    change.conversationId !== undefined &&
+                    change.value !== null &&
+                    (change.value as LiveState).run === undefined
+                ) {
+                    // The reply/turn has finished: build its saved summaries while the conversation is idle.
+                    treeArrivals.add(change.conversationId);
+                }
+            } else if (change.type === "entry" && ResetEntry.is(change.value)) {
+                const { conversationId, id } = change.value;
+
+                // Session APIs cannot reenter commit publication. Background context outlives this callback.
+                setImmediate(() => {
+                    if (this.#closing !== undefined) {
+                        return;
+                    }
+
+                    void this.treeMemory
+                        .reset(conversationId, id, context)
+                        .catch((error) => this.#log(describe(error)));
+                });
+            } else if (
+                change.type === "entry" &&
+                change.value.model?.some((message) => message.role !== "system")
+            ) {
+                treeArrivals.add(change.value.conversationId);
             } else if (change.type === "submission") {
                 this.attribution.submissionCommitted(change.value);
             }
+        }
+
+        // Never call the Harness from its publication listener. One notification per conversation/publication;
+        // the native transaction coalesces all notifications into one durable background owner.
+        for (const id of treeArrivals) {
+            setImmediate(() => {
+                if (this.#closing !== undefined) {
+                    return;
+                }
+
+                void this.treeMemory
+                    .arrived(id, context)
+                    .catch((error) => this.#log(describe(error)));
+            });
         }
 
         if (sessionsChanged) {

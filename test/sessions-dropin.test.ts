@@ -67,6 +67,7 @@ test("native loader hands sessions to its enabled owner drop-in, keeps failed re
     const registry = createRegistry();
     const choices = new Map<string, boolean>();
     const notices: string[] = [];
+    const { treeMemoryHost } = await import("../src/server/tree-memory-host.ts");
     const host: PocketHost = {
         guard: app.guard,
         approvals: app.approvals,
@@ -81,6 +82,7 @@ test("native loader hands sessions to its enabled owner drop-in, keeps failed re
         schedules: app.schedules,
         goals: app.goals,
         browsers: app.browsers,
+        treeMemory: treeMemoryHost(app, () => true),
     };
 
     prepareDropInFolder(builtIn, join(APP_ROOT, "node_modules"));

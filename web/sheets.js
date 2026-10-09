@@ -19,6 +19,7 @@ import { SchedulesSheet } from "./sheets/schedules.js";
 import { ShortcutsSheet } from "./sheets/shortcuts.js";
 import { SpendSheet } from "./sheets/spend.js";
 import { TextSheet } from "./sheets/text.js";
+import { TreeMemorySheet } from "./sheets/tree-memory.js";
 import { ArtifactsSheet, ArtifactViewer, ImageViewer } from "./sheets/viewers.js";
 import { WorktreeSheet } from "./sheets/worktree.js";
 import { actions, api, store } from "./store.js";
@@ -89,6 +90,9 @@ function sheetBody(sheet) {
             break;
         case "notifications":
             body = html`<${NotificationsSheet} />`;
+            break;
+        case "tree-memory":
+            body = view.conversation ? html`<${TreeMemorySheet} />` : null;
             break;
         case "menu":
             body = html`<${MenuSheet} />`;

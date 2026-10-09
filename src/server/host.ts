@@ -7,6 +7,7 @@ import type { Goals } from "./goals.ts";
 import type { LancetGuard } from "./lancet.ts";
 import type { Schedules } from "./schedules.ts";
 import type { sessionQueue } from "./session-queue.ts";
+import type { treeMemoryHost } from "./tree-memory-host.ts";
 
 export interface ApprovalRequest {
     id: string;
@@ -130,6 +131,8 @@ export interface PocketHost {
     readonly schedules: Pick<Schedules, "add" | "cancel" | "list" | "task">;
     /** Sessions' goals: the goals extension runs their checks and counts them. */
     readonly goals: Pick<Goals, "get" | "run" | "record" | "mayContinue">;
+    /** Owner-only enrollment; navigation is restricted to the calling tool's own conversation. */
+    readonly treeMemory: ReturnType<typeof treeMemoryHost>;
     /** The built-in browser: a page per conversation, which the people in it watch and use too. */
     readonly browsers: Pick<Browsers, "open">;
 }
