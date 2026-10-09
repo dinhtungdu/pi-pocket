@@ -906,6 +906,34 @@ export class Commands {
         }
     }
 
+    async configureTreeMemory(
+        id: ConversationId,
+        user: User,
+        change: { model?: unknown; thinkingLevel?: unknown },
+    ): Promise<void> {
+        await this.#app.treeMemory.configure(id, user, change, context);
+        await this.#app.collab.activity(
+            id,
+            user,
+            "changed compressor settings for future summaries",
+        );
+    }
+
+    async setTreeMemory(id: ConversationId, user: User, enabled: unknown): Promise<void> {
+        if (typeof enabled !== "boolean") {
+            throw new HttpError(400, "enabled must be true or false");
+        }
+
+        await this.#app.treeMemory.set(id, enabled, undefined, true, context, user);
+        await this.#app.collab.activity(
+            id,
+            user,
+            enabled
+                ? "enabled tree memory; visible history prepares on next input (paid compression)"
+                : "disabled tree memory; native context restored",
+        );
+    }
+
     /** Start a new context: Pi no longer sees what came before, though everyone still can. An optional note carries over. */
     async reset(id: ConversationId, user: User, note: unknown): Promise<void> {
         const app = this.#app;

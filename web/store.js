@@ -48,6 +48,7 @@ const emptyView = () => ({
     goal: null,
     branch: null,
     subagentsHeld: null,
+    treeMemory: null,
 });
 
 export const store = {
@@ -367,6 +368,7 @@ function applyView(data) {
                 turns: data.turns ?? base.turns,
                 decisions: data.decisions ?? base.decisions,
                 plan: data.plan ?? base.plan,
+                treeMemory: data.treeMemory ?? base.treeMemory,
                 schedules: data.schedules ?? base.schedules,
                 // No goal is null, which the server sends too: only a missing field keeps the last value.
                 goal: data.goal === undefined ? base.goal : data.goal,
@@ -817,6 +819,8 @@ export const actions = {
     configure: (change) => api(`c/${current()}/configure`, change),
     /** The owner's model and thinking level for new sessions, `{ provider, modelId, thinkingLevel }`; null clears it. */
     setDefaultModel: (choice) => api("settings", { defaultModel: choice }),
+    treeMemory: (enabled) => api(`c/${current()}/tree-memory`, { enabled }),
+    configureTreeMemory: (change) => api(`c/${current()}/tree-memory`, change),
     compact: (instructions) => api(`c/${current()}/compact`, { instructions }),
     reset: (note) => api(`c/${current()}/reset`, { note }),
     setInstructions: (text) => api(`c/${current()}/instructions`, { text }),

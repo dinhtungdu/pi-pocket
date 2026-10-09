@@ -229,6 +229,7 @@ export function MenuSheet() {
         }
         ${conversation && trustAvailable() && item("Project trust", () => openSheet({ type: "trust" }), trustHint())}
         ${session && steer && driving && item("Instructions for Pi", () => openSheet({ type: "instructions" }), instructions ? "on" : "none")}
+        ${conversation && view.treeMemory && item("Tree memory", () => openSheet({ type: "tree-memory" }), !view.treeMemory.enabled || !view.treeMemory.available ? "off" : view.treeMemory.phase === "ready" ? "active" : view.treeMemory.phase === "error" ? "error" : "preparing")}
         ${conversation && steer && driving && item("Compact context", () => openSheet({ type: "compact" }), "summarize older messages")}
         ${conversation && steer && driving && item("New context", () => openSheet({ type: "reset" }), "Pi starts fresh; history stays")}
         ${schedulesAvailable() && item("Scheduled messages", () => openSheet({ type: "schedules" }), view.schedules.length === 0 ? "none" : `${view.schedules.length} coming`)}

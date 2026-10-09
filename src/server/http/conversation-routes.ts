@@ -135,6 +135,22 @@ export async function conversationRoutes(
         });
     }
 
+    if (third === "tree-memory" && method === "POST") {
+        const body = await readJson<{
+            enabled?: unknown;
+            model?: unknown;
+            thinkingLevel?: unknown;
+        }>(request);
+
+        if (body.enabled === undefined) {
+            await app.commands.configureTreeMemory(id, user, body);
+        } else {
+            await app.commands.setTreeMemory(id, user, body.enabled);
+        }
+
+        return json(response, 200, { ok: true });
+    }
+
     if (third === "configure" && method === "POST") {
         await app.commands.configure(id, user, await readJson(request));
 
